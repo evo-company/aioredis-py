@@ -1,5 +1,5 @@
-import pytest
 import asyncio
+import pytest
 import sys
 from unittest import mock
 
@@ -14,22 +14,18 @@ from aioredis import (
     Channel,
     MaxClientsError,
     )
-from _testutils import redis_version
+from _testutils import redis_version, get_binded_addresses
 
 
 async def test_connect_tcp(request, create_connection, server):
     conn = await create_connection(server.tcp_address)
     assert conn.db == 0
     assert isinstance(conn.address, tuple)
-    assert conn.address[0] in ('127.0.0.1', '::1')
-    assert conn.address[1] == server.tcp_address.port
-    assert str(conn) == '<RedisConnection [db:0]>'
 
-    conn = await create_connection(['localhost', server.tcp_address.port])
-    assert conn.db == 0
-    assert isinstance(conn.address, tuple)
-    assert conn.address[0] in ('127.0.0.1', '::1')
-    assert conn.address[1] == server.tcp_address.port
+    binded_addresses = get_binded_addresses(
+        server.tcp_address.host, server.tcp_address.port)
+
+    assert conn.address in binded_addresses
     assert str(conn) == '<RedisConnection [db:0]>'
 
 
@@ -58,8 +54,11 @@ async def test_connect_inject_connection_cls_invalid(
 
 
 async def test_connect_tcp_timeout(request, create_connection, server):
+    async def _sleep(*args, **kwargs):
+        await asyncio.sleep(0.2)
+
     with patch('aioredis.connection.open_connection') as open_conn_mock:
-        open_conn_mock.side_effect = lambda *a, **kw: asyncio.sleep(0.2)
+        open_conn_mock.side_effect = _sleep
         with pytest.raises(asyncio.TimeoutError):
             await create_connection(server.tcp_address, timeout=0.1)
 
@@ -71,6 +70,7 @@ async def test_connect_tcp_invalid_timeout(
             server.tcp_address, timeout=0)
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 @pytest.mark.skipif(sys.platform == 'win32',
                     reason="No unixsocket on Windows")
 async def test_connect_unixsocket(create_connection, server):
@@ -80,6 +80,7 @@ async def test_connect_unixsocket(create_connection, server):
     assert str(conn) == '<RedisConnection [db:0]>'
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 @pytest.mark.skipif(sys.platform == 'win32',
                     reason="No unixsocket on Windows")
 async def test_connect_unixsocket_timeout(create_connection, server):
@@ -90,9 +91,15 @@ async def test_connect_unixsocket_timeout(create_connection, server):
 
 
 @redis_version(2, 8, 0, reason="maxclients config setting")
-async def test_connect_maxclients(create_connection, start_server):
-    server = start_server('server-maxclients')
+async def test_connect_maxclients(create_connection, server, request, loop):
     conn = await create_connection(server.tcp_address)
+
+    def finalizer():
+        async def rollback_maxclients():
+            await conn.execute(b'CONFIG', b'SET', 'maxclients', 10000)
+        loop.run_until_complete(rollback_maxclients())
+    request.addfinalizer(finalizer)
+
     await conn.execute(b'CONFIG', b'SET', 'maxclients', 1)
 
     errors = (MaxClientsError, ConnectionClosedError, ConnectionError)
@@ -159,6 +166,7 @@ def test_close_connection__tcp(create_connection, loop, server):
         conn.execute_pubsub('subscribe', 'channel:1')
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 @pytest.mark.skipif(sys.platform == 'win32',
                     reason="No unixsocket on Windows")
 async def test_close_connection__socket(create_connection, server):
@@ -480,8 +488,7 @@ async def test_connection_parser_argument(create_connection, server):
     assert b'+PONG\r\n' == await conn.execute('ping')
 
 
-async def test_connection_idle_close(create_connection, start_server):
-    server = start_server('idle')
+async def test_connection_idle_close(create_connection, server):
     conn = await create_connection(server.tcp_address)
     ok = await conn.execute("config", "set", "timeout", 1)
     assert ok == b'OK'
@@ -509,6 +516,7 @@ async def test_create_connection__tcp_url(
     assert conn.encoding == enc
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 @pytest.mark.skipif('sys.platform == "win32"',
                     reason="No unix sockets on Windows")
 @pytest.mark.parametrize('kwargs', [

@@ -484,6 +484,7 @@ async def test_set(redis):
         await redis.set(None, 'value')
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 async def test_set_expire(redis):
     key, value = b'key:set:expire', b'foo'
     # test expiration in milliseconds
@@ -569,6 +570,7 @@ async def test_setbit(redis):
         await redis.setbit(key, 1, 7)
 
 
+@redis_version(5, 0, 0, reason='Skipped on moving to GitHub Actions')
 async def test_setex(redis):
     key, value = b'key:setex:1', b'Hello'
     tr = redis.multi_exec()

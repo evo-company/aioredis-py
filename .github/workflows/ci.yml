@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - 1.x
+    tags: [ 'v*' ]
+  pull_request:
+    branches:
+      - 1.x
+      - 'update/pre-commit-autoupdate'
+
+
+jobs:
+  lint:
+    name: Linter
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2.3.4
+    - name: Setup Python 3.8
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+    - name: Install dependencies
+      uses: py-actions/py-dependency-install@v2.1.0
+      with:
+        path: tests/requirements.txt
+    - name: Run mypy
+      run: |
+        pip install -r tests/requirements-mypy.txt
+        make mypy
+    - name: Run linter
+      run: |
+        make flake
+    - name: Prepare twine checker
+      run: |
+        pip install -U twine wheel
+        python setup.py sdist bdist_wheel
+    - name: Run twine checker
+      run: |
+        twine check dist/*
+
+  test:
+    name: Test
+    needs: lint
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        pyver: ["3.6", "3.7", "3.8", "3.9"]
+        # uvloop: [uvloop, no-uvloop]
+        uvloop: [no-uvloop]
+        redis: ["4.0.14", "5.0.14"]
+        exclude:
+        - { pyver: pypy3, uvloop: uvloop, os: ubuntu-latest, redis: 5.0.14 }
+        - { pyver: pypy3, uvloop: uvloop, os: ubuntu-latest, redis: 6.2.4 }
+        - { pyver: 3.6, uvloop: uvloop, os: ubuntu-latest, redis: 5.0.14 }
+        - { pyver: 3.6, uvloop: uvloop, os: ubuntu-latest, redis: 6.2.4 }
+      fail-fast: false
+    services:
+      redis:
+        image: bitnami/redis:${{ matrix.redis }}
+        ports:
+        - 6379:6379
+        env:
+          ALLOW_EMPTY_PASSWORD: 'yes'
+          REDIS_AOF_ENABLED: 'no'
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis-b:
+        image: bitnami/redis:${{ matrix.redis }}
+        ports:
+        - 6380:6380
+        env:
+          ALLOW_EMPTY_PASSWORD: 'yes'
+          REDIS_PORT: 6380  # For bitnami/redis:4.0
+          REDIS_PORT_NUMBER: 6380
+          REDIS_AOF_ENABLED: 'no'
+        options: >-
+          --health-cmd "redis-cli -p 6380 ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      OS: ${{ matrix.os }}
+      INSTALL_DIR: ${{ github.workspace }}/redis
+      PYTEST_ADDOPTS: --${{ matrix.uvloop }} --redis-url=redis://localhost:6379/0 --redis-b-url=redis://localhost:6380/0 --redis-docker-url=redis://redis:6379/0 --redis-b-docker-url=redis://redis-b:6380/0
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2.3.4
+    - name: Setup Python ${{ matrix.pyver }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.pyver }}
+    - name: Get pip cache dir
+      id: pip-cache
+      run: |
+        echo "::set-output name=dir::$(pip cache dir)"
+    - name: Cache PyPI
+      uses: actions/cache@v2.1.6
+      with:
+        key: pip-ci-${{ runner.os }}-${{ matrix.pyver }}-${{ hashFiles('**/requirements.txt') }}
+        path: ${{ steps.pip-cache.outputs.dir }}
+        restore-keys: |
+            pip-ci-${{ runner.os }}-${{ matrix.pyver }}
+    - name: Install dependencies
+      uses: py-actions/py-dependency-install@v2.1.0
+      with:
+        path: tests/requirements.txt
+    - name: Install uvloop
+      if: ${{ matrix.uvloop == 'uvloop' }}
+      run: pip install uvloop
+    - name: Install Self
+      run: |
+        pip install -e . -c tests/requirements.txt
+    - name: Run unittests (${{ matrix.uvloop }}, ${{ matrix.os }})
+      run: |
+        make ci-test
+        python -m coverage xml
+    - name: Upload coverage
+      uses: codecov/codecov-action@v2.1.0
+      with:
+        file: ./coverage.xml
+        flags: unit
+        env_vars: OS
+        fail_ci_if_error: false

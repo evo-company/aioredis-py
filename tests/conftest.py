@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import pytest
 import socket
@@ -7,8 +8,6 @@ import contextlib
 import os
 import ssl
 import time
-import tempfile
-import atexit
 import inspect
 
 from collections import namedtuple
@@ -17,7 +16,11 @@ from async_timeout import timeout as async_timeout
 
 import aioredis
 import aioredis.sentinel
+from aioredis.connection import parse_url
 
+default_redis_url = 'redis://redis:6379/0'
+default_redis_b_url = 'redis://redis_b:6379/0'
+default_sentinel = ('redis-sentinel', 26379)
 
 TCPAddress = namedtuple('TCPAddress', 'host port')
 
@@ -26,6 +29,52 @@ RedisServer = namedtuple('RedisServer',
 
 SentinelServer = namedtuple('SentinelServer',
                             'name tcp_address unixsocket version masters')
+
+
+# Taken from python3.9
+class BooleanOptionalAction(argparse.Action):
+    def __init__(
+        self,
+        option_strings,
+        dest,
+        default=None,
+        type=None,
+        choices=None,
+        required=False,
+        help=None,
+        metavar=None,
+    ):
+
+        _option_strings = []
+        for option_string in option_strings:
+            _option_strings.append(option_string)
+
+            if option_string.startswith("--"):
+                option_string = "--no-" + option_string[2:]
+                _option_strings.append(option_string)
+
+        if help is not None and default is not None:
+            help += f" (default: {default})"
+
+        super().__init__(
+            option_strings=_option_strings,
+            dest=dest,
+            nargs=0,
+            default=default,
+            type=type,
+            choices=choices,
+            required=required,
+            help=help,
+            metavar=metavar,
+        )
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        if option_string in self.option_strings:
+            setattr(
+                namespace, self.dest, not option_string.startswith("--no-"))
+
+    def format_usage(self):
+        return " | ".join(self.option_strings)
 
 # Public fixtures
 
@@ -98,6 +147,26 @@ def create_pool(_closable):
 
 
 @pytest.fixture
+def config_set(request, loop):
+    async def f(address, parameter, value):
+        redis = await aioredis.create_redis(address)
+        last_value = (await redis.config_get(parameter))[parameter]
+
+        def finalizer():
+            async def rollback_value():
+                kwargs = {}
+                if parameter == 'requirepass':
+                    kwargs['password'] = value
+                redis = await aioredis.create_redis(address, **kwargs)
+                await redis.config_set(parameter, last_value)
+            loop.run_until_complete(rollback_value())
+        request.addfinalizer(finalizer)
+
+        await redis.config_set(parameter, value)
+    return f
+
+
+@pytest.fixture
 def create_sentinel(_closable):
     """Helper instantiating RedisSentinel client."""
 
@@ -121,6 +190,18 @@ def redis(create_redis, server, loop):
     """Returns Redis client instance."""
     redis = loop.run_until_complete(
         create_redis(server.tcp_address))
+
+    async def clear():
+        await redis.flushall()
+    loop.run_until_complete(clear())
+    return redis
+
+
+@pytest.fixture
+def redis_b(create_redis, serverB, loop):
+    """Returns Redis client instance."""
+    redis = loop.run_until_complete(
+        create_redis(serverB.tcp_address))
 
     async def clear():
         await redis.flushall()
@@ -158,20 +239,54 @@ def _closable(loop):
         loop.run_until_complete(close())
 
 
-@pytest.fixture(scope='session')
-def server(start_server):
-    """Starts redis-server instance."""
-    return start_server('A')
+def _server(name, redis_url):
+    connect_address, connect_options = parse_url(redis_url)
+
+    tcp_address = TCPAddress(connect_address[0], connect_address[1])
+    return RedisServer(
+        name=name, tcp_address=tcp_address, unixsocket=None,
+        version=VERSIONS[redis_url], password=None,
+    )
 
 
 @pytest.fixture(scope='session')
-def serverB(start_server):
-    """Starts redis-server instance."""
-    return start_server('B')
+def server(request, start_server):
+    url = request.config.getoption('--redis-url')
+    return _server('master-no-fail', url)
 
 
 @pytest.fixture(scope='session')
-def sentinel(start_sentinel, request, start_server):
+def serverB(request):
+    url = request.config.getoption('--redis-b-url')
+    return _server('B', url)
+
+
+@pytest.fixture(scope='session')
+def server_docker_address(request):
+    """ Temporary solution. For communication between two redises
+    (MIGRATE command) """
+    redis_url = (
+        request.config.getoption('--redis-docker-url')
+        or request.config.getoption('--redis-url')
+    )
+    connect_address, connect_options = parse_url(redis_url)
+    return TCPAddress(connect_address[0], connect_address[1])
+
+
+@pytest.fixture(scope='session')
+def serverB_docker_address(request):
+    """ Temporary solution. For communication between two redises
+    (MIGRATE command) """
+    redis_url = (
+        request.config.getoption('--redis-b-docker-url')
+        or request.config.getoption('--redis-b-url')
+    )
+    connect_address, connect_options = parse_url(redis_url)
+    return TCPAddress(connect_address[0], connect_address[1])
+
+
+@pytest.fixture(scope='session')
+def sentinel(start_sentinel, request, server):
     """Starts redis-sentinel instance with one master -- masterA."""
     # Adding master+slave for normal (no failover) tests:
     master_no_fail = start_server('master-no-fail')
@@ -179,7 +294,7 @@ def sentinel(start_sentinel, request, start_server):
     # Adding master+slave for failover test;
     masterA = start_server('masterA')
     start_server('slaveA', slaveof=masterA)
-    return start_sentinel('main', masterA, master_no_fail)
+    return start_sentinel('main', server)
 
 
 @pytest.fixture(params=['path', 'query'])
@@ -211,32 +326,29 @@ def server_unix_url(server):
 
 
 def pytest_addoption(parser):
-    parser.addoption('--redis-server', default=[],
-                     action="append",
-                     help="Path to redis-server executable,"
-                          " defaults to `%(default)s`")
+    parser.addoption(
+        '--redis-url',
+        default=default_redis_url,
+        action='store',
+        help='Redis connection string, defaults to `%(default)s`',
+    )
+    parser.addoption(
+        '--redis-b-url',
+        default=default_redis_b_url,
+        action='store',
+        help='Redis (second) connection string, defaults to `%(default)s`',
+    )
+    parser.addoption('--redis-b-docker-url', default=None, action='store')
+    parser.addoption('--redis-docker-url', default=None, action='store')
     parser.addoption('--ssl-cafile', default='tests/ssl/cafile.crt',
                      help="Path to testing SSL CA file")
     parser.addoption('--ssl-dhparam', default='tests/ssl/dhparam.pem',
                      help="Path to testing SSL DH params file")
     parser.addoption('--ssl-cert', default='tests/ssl/cert.pem',
                      help="Path to testing SSL CERT file")
-    parser.addoption('--uvloop', default=False,
-                     action='store_true',
-                     help="Run tests with uvloop")
-
-
-def _read_server_version(redis_bin):
-    args = [redis_bin, '--version']
-    with subprocess.Popen(args, stdout=subprocess.PIPE) as proc:
-        version = proc.stdout.readline().decode('utf-8')
-    for part in version.split():
-        if part.startswith('v='):
-            break
-    else:
-        raise RuntimeError(
-            "No version info can be found in {}".format(version))
-    return tuple(map(int, part[2:].split('.')))
+    parser.addoption('--uvloop',
+                     action=BooleanOptionalAction,
+                     help='Run tests with uvloop')
 
 
 @contextlib.contextmanager
@@ -266,105 +378,15 @@ def start_server(_proc, request, unused_port, server_bin):
          for backward compatibility).
     """
 
-    version = _read_server_version(server_bin)
-    verbose = request.config.getoption('-v') > 3
-
-    servers = {}
-
-    def timeout(t):
-        end = time.time() + t
-        while time.time() <= end:
-            yield True
-        raise RuntimeError("Redis startup timeout expired")
+    url = request.config.getoption('--redis-url')
+    connect_address, connect_options = parse_url(url)
 
     def maker(name, config_lines=None, *, slaveof=None, password=None):
-        assert slaveof is None or isinstance(slaveof, RedisServer), slaveof
-        if name in servers:
-            return servers[name]
-
-        port = unused_port()
-        tcp_address = TCPAddress('localhost', port)
-        if sys.platform == 'win32':
-            unixsocket = None
-        else:
-            unixsocket = '/tmp/aioredis.{}.sock'.format(port)
-        dumpfile = 'dump-{}.rdb'.format(port)
-        data_dir = tempfile.gettempdir()
-        dumpfile_path = os.path.join(data_dir, dumpfile)
-        stdout_file = os.path.join(data_dir, 'aioredis.{}.stdout'.format(port))
-        tmp_files = [dumpfile_path, stdout_file]
-        if config_lines:
-            config = os.path.join(data_dir, 'aioredis.{}.conf'.format(port))
-            with config_writer(config) as write:
-                write('daemonize no')
-                write('save ""')
-                write('dir ', data_dir)
-                write('dbfilename', dumpfile)
-                write('port', port)
-                if unixsocket:
-                    write('unixsocket', unixsocket)
-                    tmp_files.append(unixsocket)
-                if password:
-                    write('requirepass "{}"'.format(password))
-                write('# extra config')
-                for line in config_lines:
-                    write(line)
-                if slaveof is not None:
-                    write("slaveof {0.tcp_address.host} {0.tcp_address.port}"
-                          .format(slaveof))
-                    if password:
-                        write('masterauth "{}"'.format(password))
-            args = [config]
-            tmp_files.append(config)
-        else:
-            args = ['--daemonize', 'no',
-                    '--save', '""',
-                    '--dir', data_dir,
-                    '--dbfilename', dumpfile,
-                    '--port', str(port),
-                    ]
-            if unixsocket:
-                args += [
-                    '--unixsocket', unixsocket,
-                    ]
-            if password:
-                args += [
-                    '--requirepass "{}"'.format(password)
-                    ]
-            if slaveof is not None:
-                args += [
-                    '--slaveof',
-                    str(slaveof.tcp_address.host),
-                    str(slaveof.tcp_address.port),
-                    ]
-                if password:
-                    args += [
-                        '--masterauth "{}"'.format(password)
-                    ]
-        f = open(stdout_file, 'w')
-        atexit.register(f.close)
-        proc = _proc(server_bin, *args,
-                     stdout=f,
-                     stderr=subprocess.STDOUT,
-                     _clear_tmp_files=tmp_files)
-        with open(stdout_file, 'rt') as f:
-            for _ in timeout(10):
-                assert proc.poll() is None, (
-                    "Process terminated", proc.returncode)
-                log = f.readline()
-                if log and verbose:
-                    print(name, ":", log, end='')
-                if 'The server is now ready to accept connections ' in log:
-                    break
-            if slaveof is not None:
-                for _ in timeout(10):
-                    log = f.readline()
-                    if log and verbose:
-                        print(name, ":", log, end='')
-                    if 'sync: Finished with success' in log:
-                        break
-        info = RedisServer(name, tcp_address, unixsocket, version, password)
-        servers.setdefault(name, info)
+        tcp_address = TCPAddress(connect_address[0], connect_address[1])
+        info = RedisServer(
+            name=name, tcp_address=tcp_address, unixsocket=None,
+            version=VERSIONS[url], password=None,
+        )
         return info
 
     return maker
@@ -373,90 +395,18 @@ def start_server(_proc, request, unused_port, server_bin):
 @pytest.fixture(scope='session')
 def start_sentinel(_proc, request, unused_port, server_bin):
     """Starts Redis Sentinel instances."""
-    version = _read_server_version(server_bin)
-    verbose = request.config.getoption('-v') > 3
 
-    sentinels = {}
-
-    def timeout(t):
-        end = time.time() + t
-        while time.time() <= end:
-            yield True
-        raise RuntimeError("Redis startup timeout expired")
+    url = request.config.getoption('--redis-url')
+    connect_address, connect_options = parse_url(url)
+    version = VERSIONS[url]
 
     def maker(name, *masters, quorum=1, noslaves=False,
               down_after_milliseconds=3000,
               failover_timeout=1000):
-        key = (name,) + masters
-        if key in sentinels:
-            return sentinels[key]
-        port = unused_port()
-        tcp_address = TCPAddress('localhost', port)
-        data_dir = tempfile.gettempdir()
-        config = os.path.join(
-            data_dir, 'aioredis-sentinel.{}.conf'.format(port))
-        stdout_file = os.path.join(
-            data_dir, 'aioredis-sentinel.{}.stdout'.format(port))
-        tmp_files = [config, stdout_file]
-        if sys.platform == 'win32':
-            unixsocket = None
-        else:
-            unixsocket = os.path.join(
-                data_dir, 'aioredis-sentinel.{}.sock'.format(port))
-            tmp_files.append(unixsocket)
+        tcp_address = TCPAddress(default_sentinel[0], default_sentinel[1])
+        return SentinelServer(
+            name, tcp_address, None, version, {m.name: m for m in masters})
 
-        with config_writer(config) as write:
-            write('daemonize no')
-            write('save ""')
-            write('port', port)
-            if unixsocket:
-                write('unixsocket', unixsocket)
-            write('loglevel debug')
-            for master in masters:
-                write('sentinel monitor', master.name,
-                      '127.0.0.1', master.tcp_address.port, quorum)
-                write('sentinel down-after-milliseconds', master.name,
-                      down_after_milliseconds)
-                write('sentinel failover-timeout', master.name,
-                      failover_timeout)
-                write('sentinel auth-pass', master.name, master.password)
-
-        f = open(stdout_file, 'w')
-        atexit.register(f.close)
-        proc = _proc(server_bin,
-                     config,
-                     '--sentinel',
-                     stdout=f,
-                     stderr=subprocess.STDOUT,
-                     _clear_tmp_files=tmp_files)
-        # XXX: wait sentinel see all masters and slaves;
-        all_masters = {m.name for m in masters}
-        if noslaves:
-            all_slaves = {}
-        else:
-            all_slaves = {m.name for m in masters}
-        with open(stdout_file, 'rt') as f:
-            for _ in timeout(30):
-                assert proc.poll() is None, (
-                    "Process terminated", proc.returncode)
-                log = f.readline()
-                if log and verbose:
-                    print(name, ":", log, end='')
-                for m in masters:
-                    if '# +monitor master {}'.format(m.name) in log:
-                        all_masters.discard(m.name)
-                    if '* +slave slave' in log and \
-                            '@ {}'.format(m.name) in log:
-                        all_slaves.discard(m.name)
-                if not all_masters and not all_slaves:
-                    break
-            else:
-                raise RuntimeError("Could not start Sentinel")
-
-        masters = {m.name: m for m in masters}
-        info = SentinelServer(name, tcp_address, unixsocket, version, masters)
-        sentinels.setdefault(key, info)
-        return info
     return maker
 
 
@@ -582,22 +532,24 @@ def pytest_collection_modifyitems(session, config, items):
             items.remove(i)
 
 
-def pytest_configure(config):
-    bins = config.getoption('--redis-server')[:]
-    cmd = 'which redis-server'
-    if not bins:
-        with os.popen(cmd) as pipe:
-            path = pipe.read().rstrip()
-        assert path, (
-            "There is no redis-server on your computer."
-            " Please install it first")
-        REDIS_SERVERS[:] = [path]
-    else:
-        REDIS_SERVERS[:] = bins
+async def _get_info(redis_url):
+    redis = await aioredis.create_redis(redis_url)
+    info = await redis.info()
+    redis.close()
+    await redis.wait_closed()
+    return info
 
-    VERSIONS.update({srv: _read_server_version(srv)
-                     for srv in REDIS_SERVERS})
-    assert VERSIONS, ("Expected to detect redis versions", REDIS_SERVERS)
+
+def pytest_configure(config):
+    loop = asyncio.get_event_loop()
+    REDIS_SERVERS[:] = [
+        config.getoption('--redis-url'),
+        config.getoption('--redis-b-url'),
+    ]
+    for redis_url in REDIS_SERVERS:
+        info = loop.run_until_complete(_get_info(redis_url))
+        version = info['server']['redis_version']
+        VERSIONS[redis_url] = tuple(map(int, version.split('.')))
 
     class DynamicFixturePlugin:
         @pytest.fixture(scope='session',

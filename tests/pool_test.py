@@ -13,9 +13,7 @@ from aioredis import (
     ConnectionsPool,
     MaxClientsError,
     )
-from _testutils import redis_version
-
-BPO_34638 = sys.version_info >= (3, 8)
+from _testutils import redis_version, get_binded_addresses
 
 
 def _assert_defaults(pool):
@@ -57,9 +55,11 @@ async def test_maxsize(maxsize, create_pool, server):
 
 
 async def test_create_connection_timeout(create_pool, server):
-    with patch('aioredis.connection.open_connection') as\
-            open_conn_mock:
-        open_conn_mock.side_effect = lambda *a, **kw: asyncio.sleep(0.2)
+    async def _sleep(*args, **kwargs):
+        await asyncio.sleep(0.2)
+
+    with patch('aioredis.connection.open_connection') as open_conn_mock:
+        open_conn_mock.side_effect = _sleep
         with pytest.raises(asyncio.TimeoutError):
             await create_pool(
                 server.tcp_address,
@@ -203,8 +203,11 @@ async def test_release_pending(create_pool, server, caplog):
 async def test_release_bad_connection(create_pool, create_redis, server):
     pool = await create_pool(server.tcp_address)
     conn = await pool.acquire()
-    assert conn.address[0] in ('127.0.0.1', '::1')
-    assert conn.address[1] == server.tcp_address.port
+
+    binded_addresses = get_binded_addresses(
+        server.tcp_address.host, server.tcp_address.port)
+    assert conn.address in binded_addresses
+
     other_conn = await create_redis(server.tcp_address)
     with pytest.raises(AssertionError):
         pool.release(other_conn)
@@ -407,10 +410,9 @@ async def test_pool_close__used(create_pool, server):
 
 @redis_version(2, 8, 0, reason="maxclients config setting")
 async def test_pool_check_closed_when_exception(
-        create_pool, create_redis, start_server, caplog):
-    server = start_server('server-small')
-    redis = await create_redis(server.tcp_address)
-    await redis.config_set('maxclients', 2)
+        create_pool, server, caplog, config_set,
+):
+    await config_set(server.tcp_address, 'maxclients', 2)
 
     errors = (MaxClientsError, ConnectionClosedError, ConnectionError)
     caplog.clear()
@@ -420,8 +422,8 @@ async def test_pool_check_closed_when_exception(
                               minsize=3)
 
     assert len(caplog.record_tuples) >= 3
-    connect_msg = "Creating tcp connection to ('localhost', {})".format(
-        server.tcp_address.port)
+    connect_msg = "Creating tcp connection to ('{host}', {port})".format(
+        host=server.tcp_address.host, port=server.tcp_address.port)
     assert caplog.record_tuples[:2] == [
         ('aioredis', logging.DEBUG, connect_msg),
         ('aioredis', logging.DEBUG, connect_msg),
@@ -469,8 +471,7 @@ async def test_pool_get_connection_with_pipelining(create_pool, server):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="flaky on windows")
-async def test_pool_idle_close(create_pool, start_server, caplog):
-    server = start_server('idle')
+async def test_pool_idle_close(create_pool, server, caplog):
     conn = await create_pool(server.tcp_address, minsize=2)
     ok = await conn.execute("config", "set", "timeout", 1)
     assert ok == b'OK'
@@ -486,15 +487,6 @@ async def test_pool_idle_close(create_pool, start_server, caplog):
         ('aioredis', logging.DEBUG,
          'Connection has been closed by server, response: None'),
     ]
-    if BPO_34638:
-        expected += [
-            ('asyncio', logging.ERROR,
-             'An open stream object is being garbage collected; '
-             'call "stream.close()" explicitly.'),
-            ('asyncio', logging.ERROR,
-             'An open stream object is being garbage collected; '
-             'call "stream.close()" explicitly.')]
-    # The order in which logs are collected differs each time.
     assert sorted(caplog.record_tuples) == sorted(expected)
 
     # On CI this test fails from time to time.

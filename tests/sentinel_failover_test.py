@@ -13,6 +13,8 @@ pytestmark = redis_version(2, 8, 12, reason="Sentinel v2 required")
 if sys.platform == 'win32':
     pytestmark = pytest.mark.skip(reason="unstable on windows")
 
+pytestmark = pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
+
 
 @pytest.mark.timeout(40)
 async def test_auto_failover(start_sentinel, start_server,

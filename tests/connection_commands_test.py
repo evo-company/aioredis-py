@@ -90,8 +90,7 @@ async def test_yield_from_backwards_compatibility(create_redis, server):
 
 
 @redis_version(4, 0, 0, reason="SWAPDB is available since redis>=4.0.0")
-async def test_swapdb(create_redis, start_server):
-    server = start_server('swapdb_1')
+async def test_swapdb(create_redis, server):
     cli1 = await create_redis(server.tcp_address, db=0)
     cli2 = await create_redis(server.tcp_address, db=1)
 
