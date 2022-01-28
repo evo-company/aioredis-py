@@ -11,8 +11,8 @@ if platform.python_implementation() == 'CPython':
 
 PY_VER = sys.version_info
 
-if PY_VER < (3, 5):
-    raise RuntimeError("aioredis doesn't support Python version prior 3.5")
+if PY_VER < (3, 6):
+    raise RuntimeError("aioredis doesn't support Python version prior 3.6")
 
 
 def read(*parts):
@@ -37,9 +37,10 @@ classifiers = [
     'Development Status :: 4 - Beta',
     'Programming Language :: Python',
     'Programming Language :: Python :: 3',
-    'Programming Language :: Python :: 3.5',
     'Programming Language :: Python :: 3.6',
     'Programming Language :: Python :: 3.7',
+    'Programming Language :: Python :: 3.8',
+    'Programming Language :: Python :: 3.9',
     'Programming Language :: Python :: 3 :: Only',
     'Operating System :: POSIX',
     'Environment :: Web Environment',
@@ -49,7 +50,7 @@ classifiers = [
     'Framework :: AsyncIO',
 ]
 
-setup(name='aioredis',
+setup(name='evo-aioredis',
       version=read_version(),
       description=("asyncio (PEP 3156) Redis support"),
       long_description="\n\n".join((read('README.rst'), read('CHANGES.txt'))),

@@ -570,7 +570,7 @@ async def test_setbit(redis):
         await redis.setbit(key, 1, 7)
 
 
-@redis_version(5, 0, 0, reason='Skipped on moving to GitHub Actions')
+@pytest.mark.xfail(reason='Skipped on moving to GitHub Actions')
 async def test_setex(redis):
     key, value = b'key:setex:1', b'Hello'
     tr = redis.multi_exec()
