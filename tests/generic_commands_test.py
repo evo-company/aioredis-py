@@ -171,7 +171,7 @@ async def test_keys(redis):
         await redis.keys(None)
 
 
-async def test_migrate(create_redis, server, serverB):
+async def test_migrate(create_redis, server, serverB, serverB_docker_address):
     redisA = await create_redis(server.tcp_address)
     redisB = await create_redis(serverB.tcp_address, db=2)
 
@@ -182,7 +182,8 @@ async def test_migrate(create_redis, server, serverB):
     assert not (await redisB.exists('my-key'))
 
     ok = await redisA.migrate(
-        'localhost', serverB.tcp_address.port, 'my-key', 2, 1000)
+        serverB_docker_address.host, serverB_docker_address.port,
+        'my-key', 2, 1000)
     assert ok is True
     assert not (await redisA.exists('my-key'))
     assert (await redisB.exists('my-key'))
@@ -205,7 +206,8 @@ async def test_migrate(create_redis, server, serverB):
 
 @redis_version(
     3, 0, 0, reason="Copy/Replace flags available since Redis 3.0")
-async def test_migrate_copy_replace(create_redis, server, serverB):
+async def test_migrate_copy_replace(
+        create_redis, server, serverB, serverB_docker_address):
     redisA = await create_redis(server.tcp_address)
     redisB = await create_redis(serverB.tcp_address, db=0)
 
@@ -213,14 +215,16 @@ async def test_migrate_copy_replace(create_redis, server, serverB):
     await redisB.delete('my-key')
 
     ok = await redisA.migrate(
-        'localhost', serverB.tcp_address.port, 'my-key', 0, 1000, copy=True)
+        serverB_docker_address.host, serverB_docker_address.port,
+        'my-key', 0, 1000, copy=True)
     assert ok is True
     assert (await redisA.get('my-key')) == b'123'
     assert (await redisB.get('my-key')) == b'123'
 
     assert (await redisA.set('my-key', 'val'))
     ok = await redisA.migrate(
-        'localhost', serverB.tcp_address.port, 'my-key', 2, 1000, replace=True)
+        serverB_docker_address.host, serverB_docker_address.port,
+        'my-key', 2, 1000, replace=True)
     assert (await redisA.get('my-key')) is None
     assert (await redisB.get('my-key'))
 
@@ -229,7 +233,9 @@ async def test_migrate_copy_replace(create_redis, server, serverB):
     3, 0, 6, reason="MIGRATE…KEYS available since Redis 3.0.6")
 @pytest.mark.skipif(
     sys.platform == 'win32', reason="Seems to be unavailable in win32 build")
-async def test_migrate_keys(create_redis, server, serverB):
+async def test_migrate_keys(
+        create_redis, server, serverB,
+        server_docker_address, serverB_docker_address):
     redisA = await create_redis(server.tcp_address)
     redisB = await create_redis(serverB.tcp_address, db=0)
 
@@ -239,7 +245,7 @@ async def test_migrate_keys(create_redis, server, serverB):
     await redisB.delete('key1', 'key2', 'key3')
 
     ok = await redisA.migrate_keys(
-        'localhost', serverB.tcp_address.port,
+        serverB_docker_address.host, serverB_docker_address.port,
         ('key1', 'key2', 'key3', 'non-existing-key'),
         dest_db=0, timeout=1000)
     assert ok is True
@@ -252,11 +258,13 @@ async def test_migrate_keys(create_redis, server, serverB):
     assert (await redisA.get('key3')) is None
 
     ok = await redisA.migrate_keys(
-        'localhost', serverB.tcp_address.port, ('key1', 'key2', 'key3'),
+        serverB_docker_address.host, serverB_docker_address.port,
+        ('key1', 'key2', 'key3'),
         dest_db=0, timeout=1000)
     assert not ok
     ok = await redisB.migrate_keys(
-        'localhost', server.tcp_address.port, ('key1', 'key2', 'key3'),
+        server_docker_address.host, server_docker_address.port,
+        ('key1', 'key2', 'key3'),
         dest_db=0, timeout=1000,
         copy=True)
     assert ok
@@ -271,7 +279,7 @@ async def test_migrate_keys(create_redis, server, serverB):
     assert (await redisA.set('key2', 'val'))
     assert (await redisA.set('key3', 'val'))
     ok = await redisA.migrate_keys(
-        'localhost', serverB.tcp_address.port,
+        serverB_docker_address.host, serverB_docker_address.port,
         ('key1', 'key2', 'key3', 'non-existing-key'),
         dest_db=0, timeout=1000, replace=True)
     assert ok is True
@@ -754,6 +762,7 @@ async def test_unlink(redis):
         await redis.unlink('my-key', 'my-key', None)
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 @redis_version(3, 0, 0, reason="WAIT is available since redis>=3.0.0")
 async def test_wait(redis):
     await add(redis, 'key', 'val1')

@@ -3,6 +3,7 @@ import pytest
 
 from aioredis import ReplyError, MultiExecError, WatchVariableError
 from aioredis import ConnectionClosedError
+from _testutils import redis_version
 
 
 async def test_multi_exec(redis):
@@ -237,6 +238,7 @@ async def test_transaction__watch_error(redis, create_redis, server):
         await fut2
 
 
+@redis_version(5, 0, 0, reason='Skipped on moving to GitHub Actions')
 async def test_multi_exec_and_pool_release(redis):
     # Test the case when pool connection is released before
     # `exec` result is received.

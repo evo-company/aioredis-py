@@ -8,7 +8,6 @@ REDIS_TAGS ?= 2.6.17 2.8.22 3.0.7 3.2.13 4.0.14 5.0.5
 ARCHIVE_URL = https://github.com/antirez/redis/archive
 INSTALL_DIR ?= build
 
-REDIS_TARGETS = $(foreach T,$(REDIS_TAGS),$(INSTALL_DIR)/$T/redis-server)
 OBSOLETE_TARGETS = $(filter-out $(REDIS_TARGETS),$(wildcard $(INSTALL_DIR)/*/redis-server))
 
 # Python implementation
@@ -87,10 +86,8 @@ $(EXAMPLES):
 certificate:
 	$(MAKE) -C tests/ssl
 
-ci-test: $(REDIS_TARGETS)
-	$(PYTEST) \
-		--cov --cov-report=xml \
-		$(foreach T,$(REDIS_TARGETS),--redis-server=$T)
+ci-test:
+	$(PYTEST) --cov --cov-report=xml
 
 ci-test-%: $(INSTALL_DIR)/%/redis-server
 	$(PYTEST) --cov --redis-server=$<

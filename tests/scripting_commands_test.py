@@ -99,6 +99,7 @@ async def test_script_load(redis):
     assert res == [1, 1]
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 async def test_script_kill(create_redis, server, redis):
     script = "while (1) do redis.call('TIME') end"
 
