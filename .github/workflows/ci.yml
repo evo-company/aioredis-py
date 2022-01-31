@@ -48,7 +48,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        pyver: ["3.6", "3.7", "3.8", "3.9"]
+        pyver: ["3.6", "3.7", "3.8", "3.9", "3.10.0"]
         # uvloop: [uvloop, no-uvloop]
         uvloop: [no-uvloop]
         redis: ["4.0.14", "5.0.14"]
@@ -71,6 +71,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
       redis-b:
         image: bitnami/redis:${{ matrix.redis }}
         ports:
@@ -85,12 +86,38 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
+      redis-sentinel-master:
+        image: bitnami/redis:${{ matrix.redis }}
+        ports:
+        - 6381:6381
+        env:
+          ALLOW_EMPTY_PASSWORD: 'yes'
+          REDIS_PORT: 6381  # For bitnami/redis:4.0
+          REDIS_PORT_NUMBER: 6381
+          REDIS_AOF_ENABLED: 'no'
+        options: >-
+          --health-cmd "redis-cli -p 6381 ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis-sentinel:
+        image: bitnami/redis-sentinel:${{ matrix.redis }}
+        ports:
+        - 26379:26379
+        env:
+          REDIS_MASTER_HOST: 'redis-sentinel-master'
+          REDIS_MASTER_PORT_NUMBER: 6381
+          REDIS_MASTER_SET: 'master-no-fail'
+          REDIS_SENTINEL_QUORUM: 1
+
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     env:
       OS: ${{ matrix.os }}
       INSTALL_DIR: ${{ github.workspace }}/redis
-      PYTEST_ADDOPTS: --${{ matrix.uvloop }} --redis-url=redis://localhost:6379/0 --redis-b-url=redis://localhost:6380/0 --redis-docker-url=redis://redis:6379/0 --redis-b-docker-url=redis://redis-b:6380/0
+      PYTEST_ADDOPTS: --${{ matrix.uvloop }} --redis-url=redis://localhost:6379/0 --redis-b-url=redis://localhost:6380/0 --redis-docker-url=redis://redis:6379/0 --redis-b-docker-url=redis://redis-b:6380/0 --redis-sentinel-master-url=redis://localhost:6381/0 --redis-sentinel-url=redis://localhost:26379
     steps:
     - name: Checkout
       uses: actions/checkout@v2.3.4
@@ -126,10 +153,8 @@ jobs:
     - name: Upload coverage
       uses: codecov/codecov-action@v2.1.0
       with:
+        token: ${{ secrets.CODECOV_TOKEN }}
         file: ./coverage.xml
-        flags: unit
-        env_vars: OS
-        fail_ci_if_error: false
 
   publish:
    name: Publish
