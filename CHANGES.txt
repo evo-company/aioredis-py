@@ -3,6 +3,11 @@ Changes
 
 .. towncrier release notes start
 
+1.3.3 - unreleased
+^^^^^^^^^^^^^^^^^^
+
+- Add Python 3.10 support;
+
 1.3.2 (2022-01-28)
 ^^^^^^^^^^^^^^^^^^
 

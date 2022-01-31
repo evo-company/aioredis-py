@@ -3,15 +3,11 @@ aioredis
 
 asyncio (PEP 3156) Redis client library.
 
-.. image:: https://travis-ci.com/aio-libs/aioredis.svg?branch=master
-   :target: https://travis-ci.com/aio-libs/aioredis
+.. image:: https://github.com/evo-company/aioredis-py/actions/workflows/ci.yml/badge.svg?branch=1.x
+   :target: https://github.com/evo-company/aioredis-py/actions/workflows/ci.yml
 
-
-.. image:: https://codecov.io/gh/aio-libs/aioredis/branch/master/graph/badge.svg
-   :target: https://codecov.io/gh/aio-libs/aioredis
-
-.. image:: https://ci.appveyor.com/api/projects/status/wngyx6s98o6hsxmt/branch/master?svg=true
-   :target: https://ci.appveyor.com/project/popravich/aioredis
+.. image:: https://codecov.io/gh/evo-company/aioredis-py/branch/1.x/graph/badge.svg
+  :target: https://codecov.io/gh/evo-company/aioredis-py
 
 Features
 --------
@@ -27,8 +23,7 @@ SSL/TLS support                     Yes
 Sentinel support                    Yes
 Redis Cluster support               WIP
 Trollius (python 2.7)               No
-Tested CPython versions             `3.5.3, 3.6, 3.7 <travis_>`_ [1]_
-Tested PyPy3 versions               `pypy3.5-7.0 pypy3.6-7.1.1 <travis_>`_
+Tested CPython versions             `3.6, 3.7, 3.8, 3.9, 3.10 <travis_>`_ [1]_
 Tested for Redis server             `2.6, 2.8, 3.0, 3.2, 4.0 5.0 <travis_>`_
 Support for dev Redis server        through low-level API
 ================================  ==============================
@@ -65,7 +60,7 @@ Simple high-level interface with connections pool:
 Requirements
 ------------
 
-* Python_ 3.5.3+
+* Python_ 3.6+
 * hiredis_
 
 .. note::

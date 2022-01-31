@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import sys
 
 from concurrent.futures import ALL_COMPLETED
 from async_timeout import timeout as async_timeout
@@ -206,7 +207,11 @@ class SentinelPool:
         tasks = []
         pools = []
         for addr in self._sentinels:    # iterate over unordered set
-            tasks.append(self._connect_sentinel(addr, timeout, pools))
+            coro = self._connect_sentinel(addr, timeout, pools)
+            if sys.version_info < (3, 7):
+                tasks.append(coro)
+            else:
+                tasks.append(asyncio.create_task(coro))
         done, pending = await asyncio.wait(tasks,
                                            return_when=ALL_COMPLETED)
         assert not pending, ("Expected all tasks to complete", done, pending)

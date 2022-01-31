@@ -4,7 +4,6 @@ import pytest
 import socket
 import subprocess
 import sys
-import contextlib
 import os
 import ssl
 import time
@@ -20,7 +19,8 @@ from aioredis.connection import parse_url
 
 default_redis_url = 'redis://redis:6379/0'
 default_redis_b_url = 'redis://redis_b:6379/0'
-default_sentinel = ('redis-sentinel', 26379)
+default_sentinel_master_url = 'redis://redis-sentinel-master:6379/0'
+default_sentinel_url = 'redis://redis-sentinel:26379'
 
 TCPAddress = namedtuple('TCPAddress', 'host port')
 
@@ -79,7 +79,7 @@ class BooleanOptionalAction(argparse.Action):
 # Public fixtures
 
 
-@pytest.yield_fixture
+@pytest.fixture
 def loop():
     """Creates new event loop."""
     loop = asyncio.new_event_loop()
@@ -221,7 +221,7 @@ def redis_sentinel(create_sentinel, sentinel, loop):
     return redis_sentinel
 
 
-@pytest.yield_fixture
+@pytest.fixture
 def _closable(loop):
     conns = []
 
@@ -252,13 +252,19 @@ def _server(name, redis_url):
 @pytest.fixture(scope='session')
 def server(request, start_server):
     url = request.config.getoption('--redis-url')
-    return _server('master-no-fail', url)
+    return _server('redisA', url)
 
 
 @pytest.fixture(scope='session')
 def serverB(request):
     url = request.config.getoption('--redis-b-url')
-    return _server('B', url)
+    return _server('redisB', url)
+
+
+@pytest.fixture(scope='session')
+def serverRedisMaster(request):
+    url = request.config.getoption('--redis-sentinel-master-url')
+    return _server('master-no-fail', url)
 
 
 @pytest.fixture(scope='session')
@@ -286,15 +292,8 @@ def serverB_docker_address(request):
 
 
 @pytest.fixture(scope='session')
-def sentinel(start_sentinel, request, server):
-    """Starts redis-sentinel instance with one master -- masterA."""
-    # Adding master+slave for normal (no failover) tests:
-    master_no_fail = start_server('master-no-fail')
-    start_server('slave-no-fail', slaveof=master_no_fail)
-    # Adding master+slave for failover test;
-    masterA = start_server('masterA')
-    start_server('slaveA', slaveof=masterA)
-    return start_sentinel('main', server)
+def sentinel(start_sentinel, request, serverRedisMaster):
+    return start_sentinel('master-no-fail', serverRedisMaster)
 
 
 @pytest.fixture(params=['path', 'query'])
@@ -338,6 +337,18 @@ def pytest_addoption(parser):
         action='store',
         help='Redis (second) connection string, defaults to `%(default)s`',
     )
+    parser.addoption(
+        '--redis-sentinel-master-url',
+        default=default_sentinel_master_url,
+        action='store',
+        help='Redis (master) connection string, defaults to `%(default)s`',
+    )
+    parser.addoption(
+        '--redis-sentinel-url',
+        default=default_sentinel_url,
+        action='store',
+        help='Redis Sentinel connection string, defaults to `%(default)s`',
+    )
     parser.addoption('--redis-b-docker-url', default=None, action='store')
     parser.addoption('--redis-docker-url', default=None, action='store')
     parser.addoption('--ssl-cafile', default='tests/ssl/cafile.crt',
@@ -349,14 +360,6 @@ def pytest_addoption(parser):
     parser.addoption('--uvloop',
                      action=BooleanOptionalAction,
                      help='Run tests with uvloop')
-
-
-@contextlib.contextmanager
-def config_writer(path):
-    with open(path, 'wt') as f:
-        def write(*args):
-            print(*args, file=f)
-        yield write
 
 
 REDIS_SERVERS = []
@@ -396,14 +399,14 @@ def start_server(_proc, request, unused_port, server_bin):
 def start_sentinel(_proc, request, unused_port, server_bin):
     """Starts Redis Sentinel instances."""
 
-    url = request.config.getoption('--redis-url')
+    url = request.config.getoption('--redis-sentinel-url')
     connect_address, connect_options = parse_url(url)
     version = VERSIONS[url]
 
     def maker(name, *masters, quorum=1, noslaves=False,
               down_after_milliseconds=3000,
               failover_timeout=1000):
-        tcp_address = TCPAddress(default_sentinel[0], default_sentinel[1])
+        tcp_address = TCPAddress(connect_address[0], connect_address[1])
         return SentinelServer(
             name, tcp_address, None, version, {m.name: m for m in masters})
 
@@ -449,7 +452,7 @@ def ssl_proxy(_proc, request, unused_port):
     return sockat
 
 
-@pytest.yield_fixture(scope='session')
+@pytest.fixture(scope='session')
 def _proc():
     processes = []
     tmp_files = set()
@@ -545,6 +548,8 @@ def pytest_configure(config):
     REDIS_SERVERS[:] = [
         config.getoption('--redis-url'),
         config.getoption('--redis-b-url'),
+        config.getoption('--redis-sentinel-url'),
+        config.getoption('--redis-sentinel-master-url'),
     ]
     for redis_url in REDIS_SERVERS:
         info = loop.run_until_complete(_get_info(redis_url))

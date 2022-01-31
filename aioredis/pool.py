@@ -92,7 +92,8 @@ class ConnectionsPool(AbcPool):
         self._pool = collections.deque(maxlen=maxsize)
         self._used = set()
         self._acquiring = 0
-        self._cond = asyncio.Condition(lock=Lock())
+        condition_lock = Lock() if sys.version_info < (3, 10) else None
+        self._cond = asyncio.Condition(lock=condition_lock)
         self._close_state = CloseEvent(self._do_close)
         self._pubsub_conn = None
         self._connection_cls = connection_cls

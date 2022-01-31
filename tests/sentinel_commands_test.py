@@ -15,8 +15,6 @@ if sys.platform == 'win32':
 
 BPO_30399 = sys.version_info >= (3, 7, 0, 'alpha', 3)
 
-pytestmark = pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
-
 
 async def test_client_close(redis_sentinel):
     assert isinstance(redis_sentinel, RedisSentinel)
@@ -71,6 +69,7 @@ async def test_master_info(redis_sentinel, sentinel):
         assert 'link-refcount' in info
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 async def test_master__auth(
         create_sentinel, start_sentinel, server, config_set):
     await config_set(server.tcp_address, 'requirepass', '123')
@@ -105,6 +104,7 @@ async def test_master__auth(
         await m3.set('mykey', 'myval')
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 async def test_master__no_auth(create_sentinel, sentinel):
     client = await create_sentinel(
         [sentinel.tcp_address], password='123', timeout=1)
@@ -114,6 +114,7 @@ async def test_master__no_auth(create_sentinel, sentinel):
         await master.set('mykey', 'myval')
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 async def test_master__unknown(redis_sentinel):
     with pytest.raises(ReplyError):
         await redis_sentinel.master('unknown-master')
@@ -137,6 +138,7 @@ async def test_masters(redis_sentinel):
     assert isinstance(masters['master-no-fail'], dict)
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 async def test_slave_info(sentinel, redis_sentinel):
     info = await redis_sentinel.slaves('master-no-fail')
     assert len(info) == 1
@@ -191,6 +193,7 @@ async def test_sentinels_empty(redis_sentinel):
         await redis_sentinel.sentinels('unknown-master')
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 @pytest.mark.timeout(30)
 async def test_sentinels__exist(create_sentinel, start_sentinel,
                                 start_server):
@@ -227,6 +230,7 @@ async def test_ckquorum(redis_sentinel):
     assert (await redis_sentinel.check_quorum('master-no-fail'))
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 async def test_set_option(redis_sentinel):
     assert (await redis_sentinel.set('master-no-fail', 'quorum', 10))
     master = await redis_sentinel.master('master-no-fail')
@@ -262,6 +266,7 @@ async def test_remove(redis_sentinel, start_server):
         await redis_sentinel.remove('unknown-master')
 
 
+@pytest.mark.skip(reason='Skipped on moving to GitHub Actions')
 @pytest.mark.timeout(30)
 async def test_monitor(redis_sentinel, start_server, unused_port):
     m1 = start_server('master-to-monitor')
