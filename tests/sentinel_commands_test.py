@@ -289,12 +289,17 @@ async def test_sentinel_master_pool_size(sentinel, create_sentinel, caplog):
     caplog.clear()
     with caplog.at_level('DEBUG', 'aioredis.sentinel'):
         assert await master.ping()
-    assert len(caplog.record_tuples) == 1
-    assert caplog.record_tuples == [
-        ('aioredis.sentinel', logging.DEBUG,
-         "Discoverred new address {} for master-no-fail".format(
-            master.address)
-         ),
-    ]
+
+    assert caplog.record_tuples[0] == (
+        'aioredis.sentinel', logging.DEBUG,
+        "Discoverred new address {} for master-no-fail".format(master.address),
+    )
+    if len(caplog.record_tuples) == 2:
+        assert caplog.record_tuples[1][:2] == ('asyncio', logging.ERROR)
+        assert caplog.record_tuples[1][2].startswith(
+            'Task was destroyed but it is pending!',
+        )
+
+    assert len(caplog.record_tuples) < 3
     assert master.connection.size == 10
     assert master.connection.freesize == 10

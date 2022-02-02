@@ -238,7 +238,7 @@ class SentinelPool:
         connections pool or exception.
         """
         try:
-            with async_timeout(timeout):
+            async with async_timeout(timeout):
                 pool = await create_pool(
                     address, minsize=1, maxsize=2,
                     parser=self._parser_class,
@@ -270,17 +270,17 @@ class SentinelPool:
         pools = self._pools[:]
         for sentinel in pools:
             try:
-                with async_timeout(timeout):
+                async with async_timeout(timeout):
                     address = await self._get_masters_address(
                         sentinel, service)
 
                 pool = self._masters[service]
-                with async_timeout(timeout), \
-                        contextlib.ExitStack() as stack:
-                    conn = await pool._create_new_connection(address)
-                    stack.callback(conn.close)
-                    await self._verify_service_role(conn, 'master')
-                    stack.pop_all()
+                async with async_timeout(timeout):
+                    with contextlib.ExitStack() as stack:
+                        conn = await pool._create_new_connection(address)
+                        stack.callback(conn.close)
+                        await self._verify_service_role(conn, 'master')
+                        stack.pop_all()
 
                 return conn
             except asyncio.CancelledError:
@@ -312,16 +312,16 @@ class SentinelPool:
         pools = self._pools[:]
         for sentinel in pools:
             try:
-                with async_timeout(timeout):
+                async with async_timeout(timeout):
                     address = await self._get_slave_address(
                         sentinel, service)  # add **kwargs
                 pool = self._slaves[service]
-                with async_timeout(timeout), \
-                        contextlib.ExitStack() as stack:
-                    conn = await pool._create_new_connection(address)
-                    stack.callback(conn.close)
-                    await self._verify_service_role(conn, 'slave')
-                    stack.pop_all()
+                async with async_timeout(timeout):
+                    with contextlib.ExitStack() as stack:
+                        conn = await pool._create_new_connection(address)
+                        stack.callback(conn.close)
+                        await self._verify_service_role(conn, 'slave')
+                        stack.pop_all()
                 return conn
             except asyncio.CancelledError:
                 raise

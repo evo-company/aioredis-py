@@ -501,7 +501,7 @@ def pytest_pyfunc_call(pyfuncitem):
 
 
 async def _wait_coro(corofunc, kwargs, timeout):
-    with async_timeout(timeout):
+    async with async_timeout(timeout):
         return (await corofunc(**kwargs))
 
 
