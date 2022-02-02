@@ -3,7 +3,7 @@ Changes
 
 .. towncrier release notes start
 
-1.3.4 (unreleased)
+1.3.4 (2022-02-02)
 ^^^^^^^^^^^^^^^^^^
 
 - Fix deprecation warning with async_timeout>=4.x;
